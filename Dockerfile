@@ -1,42 +1,16 @@
-FROM golang:1.24 AS build
-
-ENV CGO_ENABLED=0
-ENV GOTOOLCHAIN=local
-ENV GOCACHE=/go/pkg/mod
-
-RUN apt-get update  \
-  && apt-get install -y --no-install-recommends net-tools curl
+# syntax=docker/dockerfile:1.4
+FROM golang:1.21-alpine
 
 WORKDIR /app
 
-COPY go.mod go.sum ./
+COPY go.mod ./
+COPY go.sum ./
+RUN go mod download
 
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY . ./
 
-COPY . /app
+RUN --mount=type=cache,id=gomod,target=/go/pkg/mod \
+    --mount=type=cache,id=gobuild,target=/root/.cache/go-build \
+    go build -o /bin/slack-mcp-server .
 
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go build -ldflags="-s -w" -o /go/bin/mcp-server ./cmd/slack-mcp-server
-
-FROM build AS dev
-
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go install github.com/go-delve/delve/cmd/dlv@v1.25.0 && cp /go/bin/dlv /dlv
-
-WORKDIR /app/mcp-server
-
-EXPOSE 3001
-
-CMD ["mcp-server", "--transport", "sse"]
-
-FROM alpine:3.22 AS production
-
-RUN apk add --no-cache ca-certificates net-tools curl
-
-COPY --from=build /go/bin/mcp-server /usr/local/bin/mcp-server
-
-WORKDIR /app
-
-EXPOSE 3001
-
-CMD ["mcp-server", "--transport", "sse"]
+ENTRYPOINT ["/bin/slack-mcp-server"]
