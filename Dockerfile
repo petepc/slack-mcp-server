@@ -9,8 +9,8 @@ RUN go mod download
 
 COPY . ./
 
-RUN --mount=type=cache,id=gomod,target=/go/pkg/mod \
-    --mount=type=cache,id=gobuild,target=/root/.cache/go-build \
+RUN --mount=type=cache,id=cache-gomod,target=/go/pkg/mod \
+    --mount=type=cache,id=cache-gobuild,target=/root/.cache/go-build \
     go build -o /bin/slack-mcp-server .
 
 ENTRYPOINT ["/bin/slack-mcp-server"]
