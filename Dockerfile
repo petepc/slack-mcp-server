@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.4
 FROM golang:1.21-alpine
 
 WORKDIR /app
@@ -8,6 +9,8 @@ RUN go mod download
 
 COPY . ./
 
-RUN go build -o /bin/slack-mcp-server .
+RUN --mount=type=cache,id=gomod,target=/go/pkg/mod \
+    --mount=type=cache,id=gobuild,target=/root/.cache/go-build \
+    go build -o /bin/slack-mcp-server .
 
 ENTRYPOINT ["/bin/slack-mcp-server"]
