@@ -1,0 +1,41 @@
+# Runway configuration for Slack MCP OAuth Wrapper
+name: slack-mcp-oauth
+
+services:
+  # MCP Server (internal service)
+  mcp-server:
+    build:
+      dockerfile: Dockerfile
+    environment:
+      - SLACK_MCP_XOXP_TOKEN
+      - SLACK_MCP_HOST=0.0.0.0
+      - SLACK_MCP_PORT=13080
+      - SLACK_MCP_SSE_API_KEY
+      - SLACK_MCP_LOG_LEVEL=info
+    command: ["./mcp-server", "--transport", "sse"]
+    internal: true  # Not exposed externally
+
+  # OAuth Wrapper (public-facing service)
+  oauth-wrapper:
+    build:
+      context: oauth-wrapper
+      dockerfile: Dockerfile
+    environment:
+      - SLACK_MCP_XOXP_TOKEN
+      - OAUTH_WRAPPER_PORT=8080
+      - OAUTH_WRAPPER_PUBLIC_URL  # Will be set by Runway with the public URL
+      - SLACK_MCP_HOST=mcp-server
+      - SLACK_MCP_PORT=13080
+      - SLACK_MCP_SSE_API_KEY
+    port: 8080
+    depends_on:
+      - mcp-server
+    healthcheck:
+      path: /health
+      interval: 30s
+      timeout: 3s
+
+# Environment variables that need to be set in Runway
+env_vars:
+  - SLACK_MCP_XOXP_TOKEN  # Required: Your Slack OAuth token
+  - SLACK_MCP_SSE_API_KEY  # Optional: API key for SSE transport security
