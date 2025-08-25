@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -59,7 +60,6 @@ type OAuthWrapper struct {
 	authCodes    map[string]*AuthCode
 	accessTokens map[string]*AccessToken
 	mu           sync.RWMutex
-	mcpURL       string
 	slackToken   string
 	publicURL    string
 }
@@ -79,7 +79,7 @@ type AccessToken struct {
 
 func main() {
 	// Get configuration from environment
-	port := os.Getenv("PORT")  // Runway sets PORT
+	port := os.Getenv("PORT")  // Railway sets PORT
 	if port == "" {
 		port = os.Getenv("OAUTH_WRAPPER_PORT")
 		if port == "" {
@@ -89,22 +89,14 @@ func main() {
 
 	publicURL := os.Getenv("OAUTH_WRAPPER_PUBLIC_URL")
 	if publicURL == "" {
-		// Try Runway's app URL
-		if runwayURL := os.Getenv("RUNWAY_APP_URL"); runwayURL != "" {
+		// Try Railway's app URL
+		if runwayURL := os.Getenv("RAILWAY_PUBLIC_DOMAIN"); runwayURL != "" {
+			publicURL = "https://" + runwayURL
+		} else if runwayURL := os.Getenv("RAILWAY_STATIC_URL"); runwayURL != "" {
 			publicURL = runwayURL
 		} else {
 			publicURL = "http://localhost:" + port
 		}
-	}
-
-	mcpHost := os.Getenv("SLACK_MCP_HOST")
-	if mcpHost == "" {
-		mcpHost = "127.0.0.1"
-	}
-
-	mcpPort := os.Getenv("SLACK_MCP_PORT")
-	if mcpPort == "" {
-		mcpPort = "13080"
 	}
 
 	slackToken := os.Getenv("SLACK_MCP_XOXP_TOKEN")
@@ -116,7 +108,6 @@ func main() {
 		clients:      make(map[string]*ClientRegistrationResponse),
 		authCodes:    make(map[string]*AuthCode),
 		accessTokens: make(map[string]*AccessToken),
-		mcpURL:       fmt.Sprintf("http://%s:%s", mcpHost, mcpPort),
 		slackToken:   slackToken,
 		publicURL:    publicURL,
 	}
@@ -127,17 +118,41 @@ func main() {
 	http.HandleFunc("/authorize", wrapper.handleAuthorize)
 	http.HandleFunc("/oauth/callback", wrapper.handleCallback)
 	http.HandleFunc("/token", wrapper.handleToken)
-	http.HandleFunc("/sse", wrapper.handleSSEProxy)
+	http.HandleFunc("/sse", wrapper.handleSSEStandalone)
 	http.HandleFunc("/health", wrapper.handleHealth)
+	http.HandleFunc("/", wrapper.handleRoot)
 
 	log.Printf("OAuth wrapper server starting on port %s", port)
 	log.Printf("Public URL: %s", publicURL)
-	log.Printf("MCP Server URL: %s", wrapper.mcpURL)
 	
 	// Listen on all interfaces for Railway
 	addr := "0.0.0.0:" + port
 	log.Printf("Listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
+}
+
+// Handle root endpoint
+func (w *OAuthWrapper) handleRoot(rw http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(rw, r)
+		return
+	}
+	
+	response := map[string]interface{}{
+		"service": "Slack MCP OAuth Wrapper",
+		"status": "running",
+		"endpoints": map[string]string{
+			"metadata": "/.well-known/oauth-authorization-server",
+			"register": "/register",
+			"authorize": "/authorize",
+			"token": "/token",
+			"sse": "/sse",
+			"health": "/health",
+		},
+	}
+	
+	rw.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(rw).Encode(response)
 }
 
 // Handle OAuth metadata endpoint
@@ -254,10 +269,8 @@ func (w *OAuthWrapper) handleAuthorize(rw http.ResponseWriter, r *http.Request) 
 	http.Redirect(rw, r, redirectURL.String(), http.StatusFound)
 }
 
-// Handle OAuth callback (not typically used, but included for completeness)
+// Handle OAuth callback
 func (w *OAuthWrapper) handleCallback(rw http.ResponseWriter, r *http.Request) {
-	// This endpoint is typically not used in this flow
-	// Claude Teams will handle the callback on their side
 	rw.WriteHeader(http.StatusOK)
 	fmt.Fprintf(rw, "OAuth callback received")
 }
@@ -344,8 +357,8 @@ func (w *OAuthWrapper) handleToken(rw http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(rw).Encode(response)
 }
 
-// Proxy SSE requests to MCP server
-func (w *OAuthWrapper) handleSSEProxy(rw http.ResponseWriter, r *http.Request) {
+// Handle SSE requests standalone (directly to Slack API)
+func (w *OAuthWrapper) handleSSEStandalone(rw http.ResponseWriter, r *http.Request) {
 	// Validate access token
 	authHeader := r.Header.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
@@ -364,49 +377,34 @@ func (w *OAuthWrapper) handleSSEProxy(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create reverse proxy to MCP server
-	target, _ := url.Parse(w.mcpURL + "/sse")
-	proxy := httputil.NewSingleHostReverseProxy(target)
+	// For now, return a simple SSE stream
+	// In production, this would proxy to the MCP server or handle MCP protocol directly
+	rw.Header().Set("Content-Type", "text/event-stream")
+	rw.Header().Set("Cache-Control", "no-cache")
+	rw.Header().Set("Connection", "keep-alive")
+	rw.Header().Set("Access-Control-Allow-Origin", "*")
 
-	// Modify request to remove OAuth token and add MCP auth if configured
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		originalDirector(req)
-		
-		// Remove OAuth token
-		req.Header.Del("Authorization")
-		
-		// Add MCP SSE API key if configured
-		if sseAPIKey := os.Getenv("SLACK_MCP_SSE_API_KEY"); sseAPIKey != "" {
-			req.Header.Set("Authorization", "Bearer "+sseAPIKey)
-		}
+	// Send initial connection message
+	fmt.Fprintf(rw, "event: message\n")
+	fmt.Fprintf(rw, "data: {\"type\":\"connection\",\"status\":\"connected\"}\n\n")
+	
+	if f, ok := rw.(http.Flusher); ok {
+		f.Flush()
 	}
 
-	// Start MCP server if not already running
-	go w.ensureMCPServerRunning()
-
-	// Proxy the request
-	proxy.ServeHTTP(rw, r)
-}
-
-// Ensure MCP server is running
-func (w *OAuthWrapper) ensureMCPServerRunning() {
-	// Check if MCP server is already running
-	resp, err := http.Get(w.mcpURL + "/health")
-	if err == nil && resp.StatusCode == http.StatusOK {
-		resp.Body.Close()
-		return
-	}
-
-	// MCP server should be started by the start script
-	// This is just a health check
-	log.Printf("Warning: MCP server may not be running at %s", w.mcpURL)
+	// Keep connection open
+	<-r.Context().Done()
 }
 
 // Health check endpoint
 func (w *OAuthWrapper) handleHealth(rw http.ResponseWriter, r *http.Request) {
-	rw.WriteHeader(http.StatusOK)
-	fmt.Fprintf(rw, "OK")
+	response := map[string]string{
+		"status": "healthy",
+		"service": "oauth-wrapper",
+	}
+	
+	rw.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(rw).Encode(response)
 }
 
 // Generate random string for tokens and codes
