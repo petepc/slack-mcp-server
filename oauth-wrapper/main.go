@@ -395,9 +395,9 @@ func (w *OAuthWrapper) ensureMCPServerRunning() {
 		return
 	}
 
-	log.Println("Starting MCP server...")
-	// The MCP server should be started separately or as a subprocess
+	// MCP server should be started by the start script
 	// This is just a health check
+	log.Printf("Warning: MCP server may not be running at %s", w.mcpURL)
 }
 
 // Health check endpoint

@@ -1,0 +1,38 @@
+FROM golang:1.21-alpine AS builder
+
+WORKDIR /app
+
+# Copy and build OAuth wrapper
+COPY oauth-wrapper/main.go ./oauth-wrapper/
+WORKDIR /app/oauth-wrapper
+RUN go mod init oauth-wrapper 2>/dev/null || true
+RUN go build -o oauth-wrapper main.go
+
+# Build MCP server
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go build -ldflags="-s -w" -o mcp-server ./cmd/slack-mcp-server
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /app
+
+# Copy both binaries
+COPY --from=builder /app/oauth-wrapper/oauth-wrapper .
+COPY --from=builder /app/mcp-server .
+
+# Copy start script
+COPY start.sh .
+RUN chmod +x start.sh
+
+# Railway uses PORT env var
+ENV PORT=8080
+ENV SLACK_MCP_HOST=127.0.0.1
+ENV SLACK_MCP_PORT=13080
+EXPOSE 8080
+
+# Use start script to manage both services
+CMD ["./start.sh"]
