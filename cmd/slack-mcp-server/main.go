@@ -67,7 +67,8 @@ func main() {
 			port = strconv.Itoa(defaultSsePort)
 		}
 
-		sseServer := s.ServeSSE(":" + port)
+		bindAddr := ":" + port
+		sseServer := s.ServeSSE(bindAddr)
 		logger.Info(
 			fmt.Sprintf("SSE server listening on %s", fmt.Sprintf("%s:%s/sse", host, port)),
 			zap.String("context", "console"),
@@ -81,7 +82,7 @@ func main() {
 			)
 		}
 
-		if err := sseServer.Start(host + ":" + port); err != nil {
+		if err := sseServer.Start(bindAddr); err != nil {
 			logger.Fatal("Server error",
 				zap.String("context", "console"),
 				zap.Error(err),

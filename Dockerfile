@@ -15,6 +15,6 @@ RUN apk add --no-cache ca-certificates curl
 COPY --from=build /go/bin/mcp-server /usr/local/bin/mcp-server
 
 ENV SLACK_MCP_HOST=0.0.0.0
-ENV SLACK_MCP_PORT=3001
-EXPOSE 3001
+ENV SLACK_MCP_PORT=${PORT:-3001}
+EXPOSE ${PORT:-3001}
 CMD ["mcp-server", "--transport", "sse"]

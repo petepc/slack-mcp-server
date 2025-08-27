@@ -211,8 +211,20 @@ func (s *MCPServer) ServeSSE(addr string) *server.SSEServer {
 		zap.String("commit_hash", version.CommitHash),
 		zap.String("address", addr),
 	)
+	
+	// For Railway and other cloud providers, we need to bind to all interfaces
+	// The base URL will be constructed from the Host header in the request
+	baseURL := fmt.Sprintf("http://0.0.0.0%s", addr)
+	if addr[0] == ':' && len(addr) > 1 {
+		// If addr is just ":port", use 0.0.0.0:port for base URL
+		baseURL = fmt.Sprintf("http://0.0.0.0%s", addr)
+	} else {
+		// If addr already contains host:port, use it as-is
+		baseURL = fmt.Sprintf("http://%s", addr)
+	}
+	
 	return server.NewSSEServer(s.server,
-		server.WithBaseURL(fmt.Sprintf("http://%s", addr)),
+		server.WithBaseURL(baseURL),
 		server.WithSSEContextFunc(func(ctx context.Context, r *http.Request) context.Context {
 			ctx = auth.AuthFromRequest(s.logger)(ctx, r)
 
