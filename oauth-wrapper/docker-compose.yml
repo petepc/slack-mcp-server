@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  mcp-server:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      - SLACK_MCP_XOXP_TOKEN=${SLACK_MCP_XOXP_TOKEN}
+      - SLACK_MCP_HOST=0.0.0.0
+      - SLACK_MCP_PORT=13080
+      - SLACK_MCP_SSE_API_KEY=${SLACK_MCP_SSE_API_KEY:-}
+      - SLACK_MCP_LOG_LEVEL=${SLACK_MCP_LOG_LEVEL:-info}
+    command: ["--transport", "sse"]
+    networks:
+      - slack-mcp
+
+  oauth-wrapper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${OAUTH_WRAPPER_PORT:-8080}:8080"
+    environment:
+      - SLACK_MCP_XOXP_TOKEN=${SLACK_MCP_XOXP_TOKEN}
+      - OAUTH_WRAPPER_PORT=8080
+      - OAUTH_WRAPPER_PUBLIC_URL=${OAUTH_WRAPPER_PUBLIC_URL:-http://localhost:8080}
+      - SLACK_MCP_HOST=mcp-server
+      - SLACK_MCP_PORT=13080
+      - SLACK_MCP_SSE_API_KEY=${SLACK_MCP_SSE_API_KEY:-}
+    depends_on:
+      - mcp-server
+    networks:
+      - slack-mcp
+
+networks:
+  slack-mcp:
+    driver: bridge

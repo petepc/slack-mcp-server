@@ -39,15 +39,16 @@ var validFilterKeys = map[string]struct{}{
 }
 
 type Message struct {
-	MsgID    string `json:"msgID"`
-	UserID   string `json:"userID"`
-	UserName string `json:"userUser"`
-	RealName string `json:"realName"`
-	Channel  string `json:"channelID"`
-	ThreadTs string `json:"ThreadTs"`
-	Text     string `json:"text"`
-	Time     string `json:"time"`
-	Cursor   string `json:"cursor"`
+	MsgID     string `json:"msgID"`
+	UserID    string `json:"userID"`
+	UserName  string `json:"userUser"`
+	RealName  string `json:"realName"`
+	Channel   string `json:"channelID"`
+	ThreadTs  string `json:"ThreadTs"`
+	Text      string `json:"text"`
+	Time      string `json:"time"`
+	Reactions string `json:"reactions,omitempty"`
+	Cursor    string `json:"cursor"`
 }
 
 type User struct {
@@ -368,10 +369,16 @@ func (ch *ConversationsHandler) convertMessagesFromHistory(slackMessages []slack
 	warn := false
 
 	for _, msg := range slackMessages {
-		if msg.SubType != "" && !includeActivity {
+		if (msg.SubType != "" && msg.SubType != "bot_message") && !includeActivity {
 			continue
 		}
+
 		userName, realName, ok := getUserInfo(msg.User, usersMap.Users)
+
+		if !ok && msg.SubType == "bot_message" {
+			userName, realName, ok = getBotInfo(msg.Username)
+		}
+
 		if !ok {
 			warn = true
 		}
@@ -382,15 +389,24 @@ func (ch *ConversationsHandler) convertMessagesFromHistory(slackMessages []slack
 			continue
 		}
 
+		msgText := msg.Text + text.AttachmentsTo2CSV(msg.Text, msg.Attachments)
+
+		var reactionParts []string
+		for _, r := range msg.Reactions {
+			reactionParts = append(reactionParts, fmt.Sprintf("%s:%d", r.Name, r.Count))
+		}
+		reactionsString := strings.Join(reactionParts, "|")
+
 		messages = append(messages, Message{
-			MsgID:    msg.Timestamp,
-			UserID:   msg.User,
-			UserName: userName,
-			RealName: realName,
-			Text:     text.ProcessText(msg.Text),
-			Channel:  channel,
-			ThreadTs: msg.ThreadTimestamp,
-			Time:     timestamp,
+			MsgID:     msg.Timestamp,
+			UserID:    msg.User,
+			UserName:  userName,
+			RealName:  realName,
+			Text:      text.ProcessText(msgText),
+			Channel:   channel,
+			ThreadTs:  msg.ThreadTimestamp,
+			Time:      timestamp,
+			Reactions: reactionsString,
 		})
 	}
 
@@ -412,7 +428,10 @@ func (ch *ConversationsHandler) convertMessagesFromSearch(slackMessages []slack.
 
 	for _, msg := range slackMessages {
 		userName, realName, ok := getUserInfo(msg.User, usersMap.Users)
-		if !ok {
+
+		if !ok && msg.User == "" && msg.Username != "" {
+			userName, realName, ok = getBotInfo(msg.Username)
+		} else if !ok {
 			warn = true
 		}
 
@@ -424,15 +443,18 @@ func (ch *ConversationsHandler) convertMessagesFromSearch(slackMessages []slack.
 			continue
 		}
 
+		msgText := msg.Text + text.AttachmentsTo2CSV(msg.Text, msg.Attachments)
+
 		messages = append(messages, Message{
-			MsgID:    msg.Timestamp,
-			UserID:   msg.User,
-			UserName: userName,
-			RealName: realName,
-			Text:     text.ProcessText(msg.Text),
-			Channel:  fmt.Sprintf("#%s", msg.Channel.Name),
-			ThreadTs: threadTs,
-			Time:     timestamp,
+			MsgID:     msg.Timestamp,
+			UserID:    msg.User,
+			UserName:  userName,
+			RealName:  realName,
+			Text:      text.ProcessText(msgText),
+			Channel:   fmt.Sprintf("#%s", msg.Channel.Name),
+			ThreadTs:  threadTs,
+			Time:      timestamp,
+			Reactions: "",
 		})
 	}
 
@@ -717,6 +739,10 @@ func getUserInfo(userID string, usersMap map[string]slack.User) (userName, realN
 		return u.Name, u.RealName, true
 	}
 	return userID, userID, false
+}
+
+func getBotInfo(botID string) (userName, realName string, ok bool) {
+	return botID, botID, true
 }
 
 func limitByNumeric(limit string, defaultLimit int) (int, error) {

@@ -1,0 +1,22 @@
+FROM golang:1.24.4-alpine AS builder
+
+WORKDIR /app
+
+# Copy and build OAuth wrapper only (simpler approach)
+COPY oauth-wrapper/main.go ./
+RUN go mod init oauth-wrapper
+RUN go build -o oauth-wrapper main.go
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /app
+
+# Copy OAuth wrapper binary
+COPY --from=builder /app/oauth-wrapper .
+
+# Railway will set PORT
+EXPOSE 8080
+
+# Run OAuth wrapper (MCP server will be started externally if needed)
+CMD ["./oauth-wrapper"]
